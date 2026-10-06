@@ -27,6 +27,21 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Check secrets
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$VITE_SUPABASE_URL" ]; then
+            echo "::error::Секрет VITE_SUPABASE_URL пуст или не задан"
+            exit 1
+          fi
+          if [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
+            echo "::error::Секрет VITE_SUPABASE_ANON_KEY пуст или не задан"
+            exit 1
+          fi
+          echo "Секреты на месте"
+
       - name: Install dependencies
         run: npm ci
 
