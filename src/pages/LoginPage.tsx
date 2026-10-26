@@ -3,14 +3,12 @@ import type { FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Spinner } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
-import { isConfigured } from '../lib/supabase'
+import { isConfigured } from '../lib/api'
 
 function translateError(err: Error): string {
   const m = err.message.toLowerCase()
-  if (m.includes('invalid login credentials')) return 'Неверный логин или пароль.'
-  if (m.includes('password should be at least')) return 'Пароль должен быть не короче 6 символов.'
-  if (m.includes('email not confirmed')) return 'Аккаунт ещё не активирован.'
-  if (m.includes('rate limit')) return 'Слишком много попыток. Подождите немного.'
+  if (m.includes('неверный логин')) return 'Неверный логин или пароль.'
+  if (m.includes('failed to fetch')) return 'Сервер недоступен. Обратитесь к администратору.'
   return 'Не удалось войти. Проверьте логин и пароль.'
 }
 
@@ -19,16 +17,15 @@ function SetupNotice() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-lg font-semibold text-slate-900">
-          Почти готово — нужно подключить Supabase
+          Почти готово — нужно подключить сервер
         </h1>
         <p className="mt-2 text-sm text-slate-600">
           В корне проекта создайте файл <code className="rounded bg-slate-100 px-1">.env</code>{' '}
           (пример — в <code className="rounded bg-slate-100 px-1">.env.example</code>) и
-          укажите ключи вашего проекта:
+          укажите адрес API:
         </p>
         <pre className="mt-4 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">
-{`VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_...`}
+{`VITE_API_URL=https://example.org/it-hub-api`}
         </pre>
         <p className="mt-4 text-sm text-slate-500">
           Подробная пошаговая инструкция — в файле{' '}

@@ -12,6 +12,8 @@ import {
   inputCls,
 } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
+import { createComment, deleteTask, getProfiles, getTask, updateTask } from '../lib/api'
+import type { TaskPatch } from '../lib/api'
 import {
   CLASSROOMS,
   COMPUTERS,
@@ -21,8 +23,7 @@ import {
   STATUS_META,
   computerLabel,
 } from '../lib/constants'
-import { displayName, formatDate, uploadPhoto } from '../lib/helpers'
-import { STORAGE_BUCKET, supabase } from '../lib/supabase'
+import { displayName, formatDate } from '../lib/helpers'
 import type {
   Attachment,
   AttachmentKind,
@@ -37,16 +38,6 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
 } from '../lib/types'
-
-type TaskPatch = {
-  title?: string
-  description?: string
-  status?: TaskStatus
-  priority?: TaskPriority
-  classroom?: string | null
-  computer?: string | null
-  assigned_to?: string | null
-}
 
 export default function TaskPage() {
   const { id } = useParams<{ id: string }>()
@@ -73,35 +64,15 @@ export default function TaskPage() {
 
   const load = useCallback(async () => {
     if (!id) return
-    const { data: t } = await supabase
-      .from('tasks')
-      .select(
-        '*, creator:created_by(id, full_name, role), assignee:assigned_to(id, full_name, role)',
-      )
-      .eq('id', id)
-      .maybeSingle()
-    if (!t) {
+    try {
+      const data = await getTask(id)
+      setTask(data.task)
+      setComments(data.comments)
+      setAttachments(data.attachments)
+      setNotFound(false)
+    } catch {
       setNotFound(true)
-      setLoading(false)
-      return
-    }
-    setTask(t as Task)
-
-    const [{ data: c }, { data: a }] = await Promise.all([
-      supabase
-        .from('comments')
-        .select('*, author:author_id(id, full_name, role)')
-        .eq('task_id', id)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('attachments')
-        .select('*, uploader:uploaded_by(id, full_name, role)')
-        .eq('task_id', id)
-        .order('created_at', { ascending: true }),
-    ])
-    if (c) setComments(c as Comment[])
-    if (a) setAttachments(a as Attachment[])
-    setLoading(false)
+    } finally { setLoading(false) }
   }, [id])
 
   useEffect(() => {
@@ -109,38 +80,12 @@ export default function TaskPage() {
   }, [load])
 
   useEffect(() => {
-    supabase
-      .from('profiles')
-      .select('*')
-      .order('full_name')
-      .then(({ data }) => {
-        if (data) setProfiles(data as Profile[])
-      })
+    getProfiles().then(setProfiles).catch(() => setProfiles([]))
   }, [])
 
   useEffect(() => {
-    if (!id) return
-    const channel = supabase
-      .channel(`task-${id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments', filter: `task_id=eq.${id}` },
-        () => load(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'attachments', filter: `task_id=eq.${id}` },
-        () => load(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tasks', filter: `id=eq.${id}` },
-        () => load(),
-      )
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    const timer = window.setInterval(load, 10_000)
+    return () => window.clearInterval(timer)
   }, [id, load])
 
   const taskAttachments = useMemo(
@@ -160,29 +105,19 @@ export default function TaskPage() {
 
   async function patch(patchObj: TaskPatch) {
     if (!task) return
-    const { error } = await supabase
-      .from('tasks')
-      .update(patchObj)
-      .eq('id', task.id)
-    if (error) {
-      alert(error.message)
-    } else {
+    try {
+      await updateTask(task.id, patchObj)
       setTask({ ...task, ...patchObj })
-    }
+    } catch (error) { alert((error as Error).message) }
   }
 
   async function patchAssignee(val: string) {
     if (!task) return
     const assignee = profiles.find((p) => p.id === val) ?? null
-    const { error } = await supabase
-      .from('tasks')
-      .update({ assigned_to: val || null })
-      .eq('id', task.id)
-    if (error) {
-      alert(error.message)
-    } else {
+    try {
+      await updateTask(task.id, { assigned_to: val || null })
       setTask({ ...task, assigned_to: val || null, assignee })
-    }
+    } catch (error) { alert((error as Error).message) }
   }
 
   function startEditing() {
@@ -201,14 +136,8 @@ export default function TaskPage() {
   async function handleDelete() {
     if (!task) return
     if (!window.confirm('Удалить задачу и все её комментарии и фото?')) return
-    for (const a of attachments) {
-      if (a.storage_path) {
-        await supabase.storage.from(STORAGE_BUCKET).remove([a.storage_path])
-      }
-    }
-    const { error } = await supabase.from('tasks').delete().eq('id', task.id)
-    if (error) alert(error.message)
-    else navigate('/')
+    try { await deleteTask(task.id); navigate('/') }
+    catch (error) { alert((error as Error).message) }
   }
 
   async function submitComment(e: FormEvent) {
@@ -217,30 +146,8 @@ export default function TaskPage() {
     if (!body.trim() && files.length === 0) return
     setSaving(true)
 
-    const { data: comment, error } = await supabase
-      .from('comments')
-      .insert({ task_id: task.id, author_id: user.id, body: body.trim() })
-      .select('*')
-      .single()
-
-    if (error || !comment) {
-      alert(error?.message ?? 'Не удалось добавить запись')
-      setSaving(false)
-      return
-    }
-
     try {
-      for (const f of files) {
-        const { storage_path, url } = await uploadPhoto(f, task.id)
-        await supabase.from('attachments').insert({
-          task_id: task.id,
-          comment_id: comment.id,
-          kind,
-          storage_path,
-          url,
-          uploaded_by: user.id,
-        })
-      }
+      await createComment(task.id, { body: body.trim(), kind, photos: files })
     } catch (err) {
       alert((err as Error).message)
       setSaving(false)

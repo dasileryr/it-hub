@@ -116,8 +116,8 @@ export default function UsersPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
-              placeholder="не менее 6 символов"
+              minLength={8}
+              placeholder="не менее 8 символов"
               className={inputCls}
             />
           </div>

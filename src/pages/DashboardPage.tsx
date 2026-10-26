@@ -4,7 +4,7 @@ import TaskCard from '../components/TaskCard'
 import { EmptyState, FullScreenLoader } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { CLASSROOMS, STATUS_META } from '../lib/constants'
-import { supabase } from '../lib/supabase'
+import { getTasks } from '../lib/api'
 import type { Task, TaskStatus } from '../lib/types'
 import { TASK_STATUSES } from '../lib/types'
 
@@ -20,49 +20,21 @@ export default function DashboardPage() {
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('tasks')
-      .select(
-        '*, creator:created_by(id, full_name, role), assignee:assigned_to(id, full_name, role)',
-      )
-      .order('updated_at', { ascending: false })
-    if (!error && data) setTasks(data as Task[])
-
-    const { data: comments } = await supabase
-      .from('comments')
-      .select('task_id')
-    if (comments) {
-      const m: Record<string, number> = {}
-      for (const row of comments) {
-        m[row.task_id] = (m[row.task_id] ?? 0) + 1
-      }
-      setCommentCounts(m)
-    }
-    setLoading(false)
+    try {
+      const data = await getTasks()
+      setTasks(data)
+      setCommentCounts(Object.fromEntries(data.map((task) => [task.id, task.comment_count ?? 0])))
+    } finally { setLoading(false) }
   }, [])
 
   useEffect(() => {
     load()
   }, [load])
 
-  // Живое обновление при изменении задач и комментариев
+  // Периодическое обновление сохраняет актуальность без внешнего realtime-сервиса.
   useEffect(() => {
-    const channel = supabase
-      .channel('dashboard-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tasks' },
-        () => load(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'comments' },
-        () => load(),
-      )
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    const timer = window.setInterval(load, 10_000)
+    return () => window.clearInterval(timer)
   }, [load])
 
   const counts = useMemo(() => {

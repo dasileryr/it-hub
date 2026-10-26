@@ -3,15 +3,12 @@ import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PhotoPicker from '../components/PhotoPicker'
 import { btnPrimary, btnSecondary, inputCls } from '../components/ui'
-import { useAuth } from '../context/AuthContext'
+import { createTask, getProfiles } from '../lib/api'
 import { CLASSROOMS, COMPUTERS, PRIORITY_META, computerLabel } from '../lib/constants'
-import { uploadPhoto } from '../lib/helpers'
-import { supabase } from '../lib/supabase'
 import type { Profile, TaskPriority } from '../lib/types'
 import { TASK_PRIORITIES } from '../lib/types'
 
 export default function NewTaskPage() {
-  const { user } = useAuth()
   const navigate = useNavigate()
 
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -26,60 +23,21 @@ export default function NewTaskPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    supabase
-      .from('profiles')
-      .select('*')
-      .order('full_name')
-      .then(({ data }) => {
-        if (data) setProfiles(data as Profile[])
-      })
+    getProfiles().then(setProfiles).catch(() => setProfiles([]))
   }, [])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!user) return
     setBusy(true)
     setError('')
-
-    const { data, error: taskErr } = await supabase
-      .from('tasks')
-      .insert({
-        title: title.trim(),
-        description: description.trim(),
-        priority,
-        classroom: classroom || null,
-        computer: computer || null,
-        assigned_to: assignee || null,
-        created_by: user.id,
-      })
-      .select('*')
-      .single()
-
-    if (taskErr || !data) {
-      setError(taskErr?.message ?? 'Не удалось создать задачу')
-      setBusy(false)
-      return
-    }
-
     try {
-      for (const f of files) {
-        const { storage_path, url } = await uploadPhoto(f, data.id)
-        await supabase.from('attachments').insert({
-          task_id: data.id,
-          comment_id: null,
-          kind: 'problem',
-          storage_path,
-          url,
-          uploaded_by: user.id,
-        })
-      }
+      const task = await createTask({ title: title.trim(), description: description.trim(), priority, classroom, computer, assigned_to: assignee, photos: files })
+      navigate(`/tasks/${task.id}`)
     } catch (err) {
       setError((err as Error).message)
       setBusy(false)
       return
     }
-
-    navigate(`/tasks/${data.id}`)
   }
 
   return (

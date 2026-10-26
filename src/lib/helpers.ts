@@ -1,5 +1,3 @@
-import { STORAGE_BUCKET, supabase } from './supabase'
-
 /** Форматирует дату в человекочитаемый вид. */
 export function formatDate(iso: string): string {
   const d = new Date(iso)
@@ -86,26 +84,4 @@ export function resizeImage(
     }
     img.src = url
   })
-}
-
-export interface UploadedPhoto {
-  storage_path: string
-  url: string
-}
-
-/** Загружает фото в хранилище и возвращает путь + публичную ссылку. */
-export async function uploadPhoto(
-  file: File,
-  taskId: string,
-): Promise<UploadedPhoto> {
-  const resized = await resizeImage(file)
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const safeExt = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext) ? ext : 'jpg'
-  const path = `${taskId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`
-  const { error } = await supabase.storage
-    .from(STORAGE_BUCKET)
-    .upload(path, resized, { contentType: resized.type || 'image/jpeg', upsert: false })
-  if (error) throw error
-  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
-  return { storage_path: path, url: data.publicUrl }
 }

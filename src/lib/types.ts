@@ -29,6 +29,7 @@ export interface Task {
   // joined (optional)
   creator?: Profile | null
   assignee?: Profile | null
+  comment_count?: number
 }
 
 export interface Comment {
