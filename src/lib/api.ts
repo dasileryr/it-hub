@@ -15,8 +15,11 @@ export interface TelegramStatus {
     telegram_username: string | null
     display_name: string
     created_at: string
+    notification_mode: TelegramNotificationMode
+    notification_user_id: string | null
   }>
 }
+export type TelegramNotificationMode = 'all_completed' | 'all_completed_and_assigned' | 'user_completed'
 
 export class ApiError extends Error {
   status: number
@@ -60,6 +63,9 @@ export async function createTelegramInvite(): Promise<{ url: string; expires_at:
 }
 export async function removeTelegramSubscriber(chatId: string): Promise<void> {
   return request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'DELETE' })
+}
+export async function updateTelegramSubscriber(chatId: string, input: { notification_mode: TelegramNotificationMode; notification_user_id: string | null }): Promise<void> {
+  await request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'PATCH', body: JSON.stringify(input) })
 }
 export async function getTasks(): Promise<Task[]> { return request('/tasks') }
 export async function getTask(id: string): Promise<TaskDetails> { return request(`/tasks/${id}`) }

@@ -53,6 +53,10 @@ async function migrate() {
       created_at timestamptz not null default now()
     );
     alter table telegram_subscribers add column if not exists notify_task_created boolean not null default false;
+    alter table telegram_subscribers add column if not exists notification_mode text not null default 'all_completed';
+    alter table telegram_subscribers add column if not exists notification_user_id uuid references profiles(id) on delete set null;
+    update telegram_subscribers set notification_mode='all_completed_and_assigned'
+      where notify_task_created=true and notification_mode='all_completed';
     create table if not exists tasks (
       id uuid primary key default gen_random_uuid(), title text not null,
       description text not null default '', status text not null default 'new' check (status in ('new','in_progress','waiting','done','cancelled')),
@@ -120,6 +124,25 @@ async function telegramCall(method, payload = {}) {
   return result.result
 }
 
+async function telegramMultipartCall(method, fields, files) {
+  if (!telegramBotToken) throw new Error('Telegram bot is not configured')
+  const form = new FormData()
+  for (const [key, value] of Object.entries(fields)) form.set(key, typeof value === 'string' ? value : JSON.stringify(value))
+  for (const file of files) {
+    const filename = path.basename(file.storage_path)
+    const contents = await fs.readFile(path.join(uploadDir, filename))
+    const ext = path.extname(filename).toLowerCase()
+    const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg'
+    form.append(file.field, new Blob([contents], { type }), filename)
+  }
+  const response = await fetch(`${telegramApiBaseUrl}/bot${telegramBotToken}/${method}`, {
+    method: 'POST', body: form, signal: AbortSignal.timeout(60_000),
+  })
+  const result = await response.json()
+  if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API error: ${response.status}`)
+  return result.result
+}
+
 async function sendTelegramMessage(chatId, text) {
   return telegramCall('sendMessage', { chat_id: chatId, text, disable_web_page_preview: true })
 }
@@ -168,7 +191,7 @@ async function handleTelegramUpdate(update) {
       [String(chatId), message.from?.username || null, displayName, result.rows[0].created_by],
     )
     await client.query('commit')
-    await sendTelegramMessage(chatId, 'Готово! Теперь сюда будут приходить отчёты об изменении статусов всех задач: автор, исполнитель, комментарий и фотографии решения. Команда /stop отключает отчёты.')
+    await sendTelegramMessage(chatId, 'Готово! Подписка на отчёты ИТ-Задач подключена. Администратор может настроить состав уведомлений. Команда /stop отключает отчёты.')
   } catch (error) {
     await client.query('rollback')
     throw error
@@ -230,18 +253,21 @@ const PRIORITY_LABELS = { low: 'Низкий', medium: 'Средний', high: '
 async function sendTelegramReport(chatId, text, photos) {
   if (photos.length === 0) return sendTelegramMessage(chatId, text)
   if (photos.length === 1) {
-    return telegramCall('sendPhoto', { chat_id: chatId, photo: photos[0].url, caption: text.slice(0, 1024) })
+    return telegramMultipartCall('sendPhoto', { chat_id: chatId, caption: text.slice(0, 1024) }, [
+      { ...photos[0], field: 'photo' },
+    ])
   }
-  return telegramCall('sendMediaGroup', {
+  const selected = photos.slice(0, 10)
+  return telegramMultipartCall('sendMediaGroup', {
     chat_id: chatId,
-    media: photos.slice(0, 10).map((photo, index) => ({
-      type: 'photo', media: photo.url, ...(index === 0 ? { caption: text.slice(0, 1024) } : {}),
+    media: selected.map((_photo, index) => ({
+      type: 'photo', media: `attach://photo${index}`, ...(index === 0 ? { caption: text.slice(0, 1024) } : {}),
     })),
-  })
+  }, selected.map((photo, index) => ({ ...photo, field: `photo${index}` })))
 }
 
 async function notifyTaskStatusChanged(task, actorId) {
-  if (!telegramBotToken) return
+  if (!telegramBotToken || task.status !== 'done') return
   const [people, comment] = await Promise.all([
     pool.query(
       `select creator.full_name creator_name, creator.username creator_username,
@@ -261,11 +287,17 @@ async function notifyTaskStatusChanged(task, actorId) {
   const person = people.rows[0]
   const latestComment = comment.rows[0]
   const photos = latestComment ? (await pool.query(
-    `select url from attachments where task_id=$1 and comment_id=$2 and kind='solution'
+    `select url, storage_path from attachments where task_id=$1 and comment_id=$2 and kind='solution'
      order by created_at limit 10`,
     [task.id, latestComment.id],
   )).rows : []
-  const subscribers = await pool.query('select chat_id from telegram_subscribers where active=true order by created_at')
+  const subscribers = await pool.query(
+    `select chat_id from telegram_subscribers
+     where active=true and (notification_mode in ('all_completed','all_completed_and_assigned')
+       or (notification_mode='user_completed' and notification_user_id=$1))
+     order by created_at`,
+    [actorId],
+  )
   if (subscribers.rowCount === 0) return
 
   const creator = person?.creator_name || `@${person?.creator_username || '—'}`
@@ -299,12 +331,13 @@ async function notifyTaskCreated(task) {
       [task.created_by, task.assigned_to],
     ),
     pool.query(
-      `select url from attachments where task_id=$1 and comment_id is null
+      `select url, storage_path from attachments where task_id=$1 and comment_id is null
        order by created_at limit 10`,
       [task.id],
     ),
     pool.query(
-      'select chat_id from telegram_subscribers where active=true and notify_task_created=true order by created_at',
+      `select chat_id from telegram_subscribers
+       where active=true and notification_mode='all_completed_and_assigned' order by created_at`,
     ),
   ])
   if (subscribers.rowCount === 0) return
@@ -329,6 +362,29 @@ async function notifyTaskCreated(task) {
   await Promise.allSettled(
     subscribers.rows.map(({ chat_id: chatId }) => sendTelegramReport(chatId, text, photos.rows)),
   )
+}
+
+async function notifyTaskAssigned(task, actorId) {
+  if (!telegramBotToken || !task.assigned_to) return
+  const [people, subscribers] = await Promise.all([
+    pool.query(
+      `select actor.full_name actor_name, actor.username actor_username,
+       assignee.full_name assignee_name, assignee.username assignee_username
+       from profiles actor join profiles assignee on assignee.id=$2 where actor.id=$1`,
+      [actorId, task.assigned_to],
+    ),
+    pool.query(
+      `select chat_id from telegram_subscribers
+       where active=true and notification_mode='all_completed_and_assigned' order by created_at`,
+    ),
+  ])
+  if (subscribers.rowCount === 0) return
+  const person = people.rows[0]
+  const actor = person?.actor_name || `@${person?.actor_username || '—'}`
+  const assignee = person?.assignee_name || `@${person?.assignee_username || '—'}`
+  const lines = ['👤 Задача назначена', '', `Задача: ${task.title}`, `Исполнитель: ${assignee}`, `Назначил: ${actor}`]
+  if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
+  await Promise.allSettled(subscribers.rows.map(({ chat_id: chatId }) => sendTelegramMessage(chatId, lines.join('\n'))))
 }
 
 const storage = multer.diskStorage({
@@ -362,7 +418,7 @@ app.get('/auth/me', authenticate, async (req, res) => {
 })
 app.get('/telegram/status', authenticate, requireAdmin, async (_req, res) => {
   const result = await pool.query(
-    `select chat_id, telegram_username, display_name, created_at
+    `select chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id
      from telegram_subscribers where active=true order by created_at`,
   )
   res.json({
@@ -370,6 +426,26 @@ app.get('/telegram/status', authenticate, requireAdmin, async (_req, res) => {
     bot_username: telegramBotUsername || null,
     subscribers: result.rows,
   })
+})
+app.patch('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (req, res) => {
+  const mode = String(req.body.notification_mode || '')
+  const userId = req.body.notification_user_id || null
+  if (!['all_completed', 'all_completed_and_assigned', 'user_completed'].includes(mode)) {
+    return res.status(400).json({ error: 'Некорректный режим уведомлений.' })
+  }
+  if (mode === 'user_completed') {
+    if (!userId) return res.status(400).json({ error: 'Выберите пользователя.' })
+    const profile = await pool.query('select 1 from profiles where id=$1', [userId])
+    if (!profile.rows[0]) return res.status(400).json({ error: 'Пользователь не найден.' })
+  }
+  const result = await pool.query(
+    `update telegram_subscribers set notification_mode=$1, notification_user_id=$2
+     where chat_id=$3 and active=true
+     returning chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id`,
+    [mode, mode === 'user_completed' ? userId : null, req.params.chatId],
+  )
+  if (!result.rows[0]) return res.status(404).json({ error: 'Получатель не найден.' })
+  res.json(result.rows[0])
 })
 app.post('/telegram/invites', authenticate, requireAdmin, async (req, res) => {
   if (!telegramBotToken || !telegramBotUsername) return res.status(503).json({ error: 'Telegram-бот ещё не настроен.' })
@@ -470,6 +546,10 @@ app.patch('/tasks/:id', authenticate, async (req, res) => {
   const result = await pool.query(`update tasks set ${set}, updated_at=now() where id=$${values.length + 1} returning *`, [...values, req.params.id])
   if (task.status !== result.rows[0].status) {
     notifyTaskStatusChanged(result.rows[0], req.auth.sub)
+      .catch((error) => console.error('Telegram notification failed:', error.message))
+  }
+  if (task.assigned_to !== result.rows[0].assigned_to) {
+    notifyTaskAssigned(result.rows[0], req.auth.sub)
       .catch((error) => console.error('Telegram notification failed:', error.message))
   }
   res.json(result.rows[0])
