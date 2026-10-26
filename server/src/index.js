@@ -52,6 +52,7 @@ async function migrate() {
       active boolean not null default true,
       created_at timestamptz not null default now()
     );
+    alter table telegram_subscribers add column if not exists notify_task_created boolean not null default false;
     create table if not exists tasks (
       id uuid primary key default gen_random_uuid(), title text not null,
       description text not null default '', status text not null default 'new' check (status in ('new','in_progress','waiting','done','cancelled')),
@@ -224,6 +225,7 @@ async function startTelegramBot() {
 const STATUS_LABELS = {
   new: 'Новая', in_progress: 'В работе', waiting: 'Ожидает', done: 'Решена', cancelled: 'Отменена',
 }
+const PRIORITY_LABELS = { low: 'Низкий', medium: 'Средний', high: 'Высокий', urgent: 'Срочный' }
 
 async function sendTelegramReport(chatId, text, photos) {
   if (photos.length === 0) return sendTelegramMessage(chatId, text)
@@ -284,6 +286,49 @@ async function notifyTaskStatusChanged(task, actorId) {
   if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
   const text = lines.join('\n')
   await Promise.allSettled(subscribers.rows.map(({ chat_id: chatId }) => sendTelegramReport(chatId, text, photos)))
+}
+
+async function notifyTaskCreated(task) {
+  if (!telegramBotToken) return
+  const [people, photos, subscribers] = await Promise.all([
+    pool.query(
+      `select creator.full_name creator_name, creator.username creator_username,
+       assignee.full_name assignee_name, assignee.username assignee_username
+       from profiles creator left join profiles assignee on assignee.id=$2
+       where creator.id=$1`,
+      [task.created_by, task.assigned_to],
+    ),
+    pool.query(
+      `select url from attachments where task_id=$1 and comment_id is null
+       order by created_at limit 10`,
+      [task.id],
+    ),
+    pool.query(
+      'select chat_id from telegram_subscribers where active=true and notify_task_created=true order by created_at',
+    ),
+  ])
+  if (subscribers.rowCount === 0) return
+
+  const person = people.rows[0]
+  const creator = person?.creator_name || `@${person?.creator_username || '—'}`
+  const assignee = person?.assignee_name || (person?.assignee_username ? `@${person.assignee_username}` : 'не назначен')
+  const location = [task.classroom && `аудитория ${task.classroom}`, task.computer && `компьютер ${task.computer}`]
+    .filter(Boolean).join(', ')
+  const lines = [
+    '🆕 Создана новая задача',
+    '',
+    `Задача: ${task.title}`,
+    `Создал: ${creator}`,
+    `Исполнитель: ${assignee}`,
+    `Приоритет: ${PRIORITY_LABELS[task.priority] || task.priority}`,
+  ]
+  if (location) lines.push(`Место: ${location}`)
+  if (task.description) lines.push('', `Описание: ${task.description.slice(0, 1500)}`)
+  if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
+  const text = lines.join('\n')
+  await Promise.allSettled(
+    subscribers.rows.map(({ chat_id: chatId }) => sendTelegramReport(chatId, text, photos.rows)),
+  )
 }
 
 const storage = multer.diskStorage({
@@ -394,6 +439,7 @@ app.post('/tasks', authenticate, upload.array('photos'), async (req, res) => {
     for (const file of req.files || []) await client.query(`insert into attachments(task_id,storage_path,url,kind,uploaded_by) values($1,$2,$3,'problem',$4)`,
       [task.id, file.filename, `${publicUrl}/uploads/${file.filename}`, req.auth.sub])
     await client.query('commit')
+    notifyTaskCreated(task).catch((error) => console.error('Telegram notification failed:', error.message))
     res.status(201).json(task)
   } catch (error) {
     await client.query('rollback')
