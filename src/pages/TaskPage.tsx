@@ -12,7 +12,7 @@ import {
   inputCls,
 } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
-import { createComment, deleteTask, getProfiles, getTask, updateTask } from '../lib/api'
+import { createComment, deleteComment, deleteTask, getProfiles, getTask, reopenTask, updateTask } from '../lib/api'
 import type { TaskPatch } from '../lib/api'
 import {
   CLASSROOMS,
@@ -106,8 +106,8 @@ export default function TaskPage() {
   async function patch(patchObj: TaskPatch) {
     if (!task) return
     try {
-      await updateTask(task.id, patchObj)
-      setTask({ ...task, ...patchObj })
+      const updated = await updateTask(task.id, patchObj)
+      setTask({ ...task, ...updated })
     } catch (error) { alert((error as Error).message) }
   }
 
@@ -138,6 +138,22 @@ export default function TaskPage() {
     if (!window.confirm('Удалить задачу и все её комментарии и фото?')) return
     try { await deleteTask(task.id); navigate('/') }
     catch (error) { alert((error as Error).message) }
+  }
+
+  async function handleReopen() {
+    if (!task) return
+    try {
+      const reopened = await reopenTask(task.id)
+      setTask({ ...task, ...reopened, status: 'in_progress', archived_at: null })
+    } catch (error) { alert((error as Error).message) }
+  }
+
+  async function handleDeleteComment(comment: Comment) {
+    if (!window.confirm('Удалить этот комментарий и прикреплённые к нему фотографии?')) return
+    try {
+      await deleteComment(comment.id)
+      await load()
+    } catch (error) { alert((error as Error).message) }
   }
 
   async function submitComment(e: FormEvent) {
@@ -349,6 +365,11 @@ export default function TaskPage() {
               </div>
 
               <div className="flex gap-2">
+                {task.archived_at && (
+                  <button onClick={handleReopen} className={btnPrimary}>
+                    Открыть заново
+                  </button>
+                )}
                 <button onClick={startEditing} className={btnSecondary}>
                   Редактировать
                 </button>
@@ -399,7 +420,8 @@ export default function TaskPage() {
                 key={c.id}
                 className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
                   <Avatar
                     name={displayName(c.author)}
                     role={c.author?.role}
@@ -418,6 +440,16 @@ export default function TaskPage() {
                       {formatDate(c.created_at)}
                     </div>
                   </div>
+                  </div>
+                  {profile?.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteComment(c)}
+                      className="text-xs font-medium text-red-600 hover:text-red-700"
+                    >
+                      Удалить
+                    </button>
+                  )}
                 </div>
 
                 {c.body && (

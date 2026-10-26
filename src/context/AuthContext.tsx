@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { clearToken, currentProfile, getToken, login } from '../lib/api'
+import { clearToken, currentProfile, getToken, login, loginWithMagicLink } from '../lib/api'
 import type { Session } from '../lib/api'
 import type { Profile } from '../lib/types'
 
@@ -29,7 +29,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(next); setSession({ access_token: token, user: { id: next.id } })
     } catch { clearToken(); setSession(null); setProfile(null) }
   }, [])
-  useEffect(() => { refreshProfile().finally(() => setLoading(false)) }, [refreshProfile])
+  useEffect(() => {
+    const magicToken = new URLSearchParams(window.location.search).get('login')
+    if (magicToken) {
+      loginWithMagicLink(magicToken).then((result) => {
+        setSession(result.session)
+        setProfile(result.profile)
+      }).catch(() => clearToken()).finally(() => {
+        window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash || '#/'}`)
+        setLoading(false)
+      })
+      return
+    }
+    refreshProfile().finally(() => setLoading(false))
+  }, [refreshProfile])
   const signIn = useCallback(async (username: string, password: string): Promise<SignResult> => {
     try {
       const result = await login(username, password)

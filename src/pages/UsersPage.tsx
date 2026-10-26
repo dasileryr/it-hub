@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { ROLE_META } from '../lib/constants'
 import { formatDate } from '../lib/helpers'
 import type { Profile, Role } from '../lib/types'
-import { adminCreateUser, listUsers, updateUserRole } from '../lib/users'
+import { adminCreateUser, listUsers, removeUser, updateUserRole } from '../lib/users'
 
 const ROLES: Role[] = ['executor', 'boss', 'admin']
 
@@ -63,6 +63,15 @@ export default function UsersPage() {
       return
     }
     setUsers((prev) => prev.map((p) => (p.id === u.id ? { ...p, role: newRole } : p)))
+  }
+
+  const remove = async (u: Profile) => {
+    if (!window.confirm(`Удалить пользователя «${u.full_name || u.username}»? Его старые задачи и комментарии сохранятся.`)) return
+    setMessage(null)
+    const res = await removeUser(u.id)
+    if (res.error) return setMessage({ kind: 'err', text: res.error })
+    setUsers((prev) => prev.filter((profile) => profile.id !== u.id))
+    setMessage({ kind: 'ok', text: 'Пользователь удалён. История его работы сохранена.' })
   }
 
   return (
@@ -160,7 +169,7 @@ export default function UsersPage() {
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[1fr_auto] items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-400">
           <span>Пользователь</span>
-          <span className="w-36">Роль</span>
+          <span className="w-52">Роль и действия</span>
         </div>
         {loading ? (
           <div className="px-4 py-10 text-center text-sm text-slate-400">Загрузка…</div>
@@ -190,7 +199,7 @@ export default function UsersPage() {
                     @{u.username || '—'} · {formatDate(u.created_at)}
                   </div>
                 </div>
-                <div className="flex w-36 items-center gap-2">
+                <div className="flex w-52 items-center justify-end gap-2">
                   {u.id === user?.id ? (
                     <Badge meta={ROLE_META[u.role]} />
                   ) : (
@@ -205,6 +214,15 @@ export default function UsersPage() {
                         </option>
                       ))}
                     </select>
+                  )}
+                  {u.id !== user?.id && (
+                    <button
+                      type="button"
+                      onClick={() => remove(u)}
+                      className="rounded-lg border border-red-200 px-2.5 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                    >
+                      Удалить
+                    </button>
                   )}
                 </div>
               </li>

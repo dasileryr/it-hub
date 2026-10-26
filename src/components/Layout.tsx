@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import { ROLE_META } from '../lib/constants'
 import { displayName } from '../lib/helpers'
 import { Avatar } from './ui'
+import PushNotificationsButton from './PushNotificationsButton'
 
 function navCls({ isActive }: { isActive: boolean }) {
   return `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -67,6 +68,7 @@ export default function Layout() {
           </div>
 
           <div className="flex items-center gap-3">
+            <PushNotificationsButton />
             {profile?.role === 'admin' && (
               <NavLink
                 to="/notifications"

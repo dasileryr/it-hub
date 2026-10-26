@@ -26,6 +26,7 @@ export interface Task {
   assigned_to: string | null
   created_at: string
   updated_at: string
+  archived_at: string | null
   // joined (optional)
   creator?: Profile | null
   assignee?: Profile | null

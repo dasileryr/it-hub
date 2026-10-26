@@ -17,6 +17,7 @@ export interface TelegramStatus {
     created_at: string
     notification_mode: TelegramNotificationMode
     notification_user_id: string | null
+    profile_id: string | null
   }>
 }
 export type TelegramNotificationMode = 'all_completed' | 'all_completed_and_assigned' | 'user_completed'
@@ -49,6 +50,11 @@ export async function login(username: string, password: string) {
   localStorage.setItem(TOKEN_KEY, result.token)
   return { session: { access_token: result.token, user: { id: result.profile.id } } as Session, profile: result.profile }
 }
+export async function loginWithMagicLink(token: string) {
+  const result = await request<{ token: string; profile: Profile; destination: string }>('/auth/magic', { method: 'POST', body: JSON.stringify({ token }) })
+  localStorage.setItem(TOKEN_KEY, result.token)
+  return { session: { access_token: result.token, user: { id: result.profile.id } } as Session, profile: result.profile, destination: result.destination }
+}
 export async function currentProfile(): Promise<Profile> { return (await request<{ profile: Profile }>('/auth/me')).profile }
 export async function getProfiles(): Promise<Profile[]> { return request('/profiles') }
 export async function createProfile(input: { username: string; password: string; fullName: string; role: Role }): Promise<Profile> {
@@ -57,6 +63,7 @@ export async function createProfile(input: { username: string; password: string;
 export async function changeProfileRole(id: string, role: Role): Promise<Profile> {
   return request(`/profiles/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) })
 }
+export async function deleteProfile(id: string): Promise<void> { return request(`/profiles/${id}`, { method: 'DELETE' }) }
 export async function getTelegramStatus(): Promise<TelegramStatus> { return request('/telegram/status') }
 export async function createTelegramInvite(): Promise<{ url: string; expires_at: string }> {
   return request('/telegram/invites', { method: 'POST' })
@@ -64,15 +71,16 @@ export async function createTelegramInvite(): Promise<{ url: string; expires_at:
 export async function removeTelegramSubscriber(chatId: string): Promise<void> {
   return request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'DELETE' })
 }
-export async function updateTelegramSubscriber(chatId: string, input: { notification_mode: TelegramNotificationMode; notification_user_id: string | null }): Promise<void> {
+export async function updateTelegramSubscriber(chatId: string, input: { notification_mode: TelegramNotificationMode; notification_user_id: string | null; profile_id: string | null }): Promise<void> {
   await request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'PATCH', body: JSON.stringify(input) })
 }
-export async function getTasks(): Promise<Task[]> { return request('/tasks') }
+export async function getTasks(archived = false): Promise<Task[]> { return request(`/tasks${archived ? '?archived=true' : ''}`) }
 export async function getTask(id: string): Promise<TaskDetails> { return request(`/tasks/${id}`) }
 export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
   return request(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
 }
 export async function deleteTask(id: string): Promise<void> { return request(`/tasks/${id}`, { method: 'DELETE' }) }
+export async function reopenTask(id: string): Promise<Task> { return request(`/tasks/${id}/reopen`, { method: 'POST' }) }
 export async function createTask(input: { title: string; description: string; priority: TaskPriority; classroom: string; computer: string; assigned_to: string; photos: File[] }): Promise<Task> {
   const form = new FormData()
   form.set('title', input.title); form.set('description', input.description); form.set('priority', input.priority)
@@ -85,5 +93,13 @@ export async function createComment(taskId: string, input: { body: string; kind:
   form.set('body', input.body); form.set('kind', input.kind)
   for (const file of input.photos) form.append('photos', await resizeImage(file), file.name)
   await request(`/tasks/${taskId}/comments`, { method: 'POST', body: form })
+}
+export async function deleteComment(id: string): Promise<void> { return request(`/comments/${id}`, { method: 'DELETE' }) }
+export async function getPushConfig(): Promise<{ enabled: boolean; publicKey: string | null }> { return request('/push/config') }
+export async function savePushSubscription(subscription: PushSubscriptionJSON): Promise<void> {
+  return request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) })
+}
+export async function removePushSubscription(endpoint: string): Promise<void> {
+  return request('/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint }) })
 }
 export type TaskPatch = { title?: string; description?: string; status?: TaskStatus; priority?: TaskPriority; classroom?: string | null; computer?: string | null; assigned_to?: string | null }

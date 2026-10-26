@@ -17,15 +17,16 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [mineOnly, setMineOnly] = useState(false)
   const [search, setSearch] = useState('')
+  const [showArchive, setShowArchive] = useState(false)
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
 
   const load = useCallback(async () => {
     try {
-      const data = await getTasks()
+      const data = await getTasks(showArchive)
       setTasks(data)
       setCommentCounts(Object.fromEntries(data.map((task) => [task.id, task.comment_count ?? 0])))
     } finally { setLoading(false) }
-  }, [])
+  }, [showArchive])
 
   useEffect(() => {
     load()
@@ -87,7 +88,7 @@ export default function DashboardPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Задачи
+            {showArchive ? 'Архив задач' : 'Задачи'}
           </h1>
           <p className="text-sm text-slate-500">
             Всего: {tasks.length}
@@ -95,10 +96,18 @@ export default function DashboardPage() {
               ` · ${STATUS_META[statusFilter as TaskStatus].label}: ${counts[statusFilter]}`}
           </p>
         </div>
-        <Link
-          to="/tasks/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
-        >
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => { setShowArchive((value) => !value); setStatusFilter('all') }}
+            className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            {showArchive ? '← Активные задачи' : 'Архив выполненных'}
+          </button>
+          {!showArchive && <Link
+            to="/tasks/new"
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
+          >
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -109,7 +118,8 @@ export default function DashboardPage() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
           Новая задача
-        </Link>
+          </Link>}
+        </div>
       </div>
 
       <div className="mb-5 flex flex-col gap-3">
@@ -185,7 +195,7 @@ export default function DashboardPage() {
             </svg>
           }
           title="Задач не найдено"
-          hint="Создайте новую задачу или измените фильтры."
+          hint={showArchive ? 'В архиве пока нет выполненных задач.' : 'Создайте новую задачу или измените фильтры.'}
         />
       ) : (
         <div className="space-y-6">

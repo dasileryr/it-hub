@@ -73,6 +73,7 @@ export default function NotificationsPage() {
       await updateTelegramSubscriber(chatId, {
         notification_mode: subscriber.notification_mode,
         notification_user_id: subscriber.notification_mode === 'user_completed' ? subscriber.notification_user_id : null,
+        profile_id: subscriber.profile_id,
       })
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -148,16 +149,30 @@ export default function NotificationsPage() {
                     Отключить
                   </button>
                 </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="text-xs font-medium text-slate-500">
+                    Аккаунт для комментариев и быстрого входа
+                    <select
+                      value={subscriber.profile_id || ''}
+                      onChange={(event) => changeSubscriber(subscriber.chat_id, { profile_id: event.target.value || null })}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700"
+                    >
+                      <option value="">Не связан</option>
+                      {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name || profile.username}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-slate-500">
+                    Какие уведомления отправлять
                   <select
                     value={subscriber.notification_mode}
                     onChange={(event) => changeSubscriber(subscriber.chat_id, { notification_mode: event.target.value as TelegramNotificationMode })}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700"
                   >
                     <option value="all_completed">Все выполненные задачи</option>
                     <option value="all_completed_and_assigned">Выполненные + новые и назначенные</option>
                     <option value="user_completed">Выполненные выбранным пользователем</option>
                   </select>
+                  </label>
                   {subscriber.notification_mode === 'user_completed' ? (
                     <select
                       value={subscriber.notification_user_id || ''}
@@ -168,7 +183,9 @@ export default function NotificationsPage() {
                       {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name || profile.username}</option>)}
                     </select>
                   ) : <div />}
-                  <button onClick={() => saveSubscriber(subscriber.chat_id)} disabled={busy} className={btnSecondary}>Сохранить</button>
+                  <div className="flex justify-end">
+                    <button onClick={() => saveSubscriber(subscriber.chat_id)} disabled={busy} className={btnSecondary}>Сохранить</button>
+                  </div>
                 </div>
               </li>
             ))}

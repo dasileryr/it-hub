@@ -1,4 +1,4 @@
-import { changeProfileRole, createProfile, getProfiles } from './api'
+import { changeProfileRole, createProfile, deleteProfile, getProfiles } from './api'
 import type { Profile, Role } from './types'
 
 const USERNAME_RE = /^[a-z0-9._-]{2,32}$/
@@ -16,3 +16,7 @@ export async function updateUserRole(userId: string, role: Role): Promise<Create
   catch (error) { return { error: (error as Error).message } }
 }
 export async function listUsers(): Promise<Profile[]> { return getProfiles() }
+export async function removeUser(userId: string): Promise<CreateUserResult> {
+  try { await deleteProfile(userId); return { error: null } }
+  catch (error) { return { error: (error as Error).message } }
+}
