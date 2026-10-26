@@ -1,4 +1,4 @@
-import { changeProfileRole, createProfile, deleteProfile, getProfiles } from './api'
+import { changeProfileRole, createProfile, deleteProfile, getProfiles, updateProfile } from './api'
 import type { Profile, Role } from './types'
 
 const USERNAME_RE = /^[a-z0-9._-]{2,32}$/
@@ -18,5 +18,12 @@ export async function updateUserRole(userId: string, role: Role): Promise<Create
 export async function listUsers(): Promise<Profile[]> { return getProfiles() }
 export async function removeUser(userId: string): Promise<CreateUserResult> {
   try { await deleteProfile(userId); return { error: null } }
+  catch (error) { return { error: (error as Error).message } }
+}
+export async function renameUser(userId: string, username: string, fullName: string): Promise<{ error: string | null; profile?: Profile }> {
+  const normalized = normalizeUsername(username)
+  if (!USERNAME_RE.test(normalized)) return { error: 'Логин: 2–32 символа, только латиница, цифры, точка, дефис, подчёркивание.' }
+  if (!fullName.trim()) return { error: 'Имя пользователя не может быть пустым.' }
+  try { return { error: null, profile: await updateProfile(userId, { username: normalized, fullName: fullName.trim() }) } }
   catch (error) { return { error: (error as Error).message } }
 }

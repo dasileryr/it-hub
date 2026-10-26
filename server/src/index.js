@@ -678,6 +678,25 @@ app.patch('/profiles/:id/role', authenticate, requireAdmin, async (req, res) => 
   if (!result.rows[0]) return res.status(404).json({ error: 'Пользователь не найден.' })
   res.json(publicProfile(result.rows[0]))
 })
+app.patch('/profiles/:id', authenticate, requireAdmin, async (req, res) => {
+  const username = String(req.body.username || '').trim().toLowerCase()
+  const fullName = String(req.body.fullName || '').trim()
+  if (!/^[a-z0-9._-]{2,32}$/.test(username)) {
+    return res.status(400).json({ error: 'Логин: 2–32 символа, только латиница, цифры, точка, дефис и подчёркивание.' })
+  }
+  if (!fullName || fullName.length > 120) return res.status(400).json({ error: 'Укажите имя пользователя длиной до 120 символов.' })
+  try {
+    const result = await pool.query(
+      `update profiles set username=$1,full_name=$2 where id=$3 and deleted_at is null returning *`,
+      [username, fullName, req.params.id],
+    )
+    if (!result.rows[0]) return res.status(404).json({ error: 'Пользователь не найден.' })
+    res.json(publicProfile(result.rows[0]))
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Пользователь с таким логином уже существует.' })
+    throw error
+  }
+})
 app.delete('/profiles/:id', authenticate, requireAdmin, async (req, res) => {
   if (req.params.id === req.auth.sub) return res.status(400).json({ error: 'Нельзя удалить собственную учётную запись.' })
   const result = await pool.query(

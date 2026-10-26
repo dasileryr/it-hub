@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { ROLE_META } from '../lib/constants'
 import { formatDate } from '../lib/helpers'
 import type { Profile, Role } from '../lib/types'
-import { adminCreateUser, listUsers, removeUser, updateUserRole } from '../lib/users'
+import { adminCreateUser, listUsers, removeUser, renameUser, updateUserRole } from '../lib/users'
 
 const ROLES: Role[] = ['executor', 'boss', 'admin']
 
@@ -21,6 +21,9 @@ export default function UsersPage() {
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<Role>('executor')
   const [creating, setCreating] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editUsername, setEditUsername] = useState('')
+  const [editFullName, setEditFullName] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -72,6 +75,24 @@ export default function UsersPage() {
     if (res.error) return setMessage({ kind: 'err', text: res.error })
     setUsers((prev) => prev.filter((profile) => profile.id !== u.id))
     setMessage({ kind: 'ok', text: 'Пользователь удалён. История его работы сохранена.' })
+  }
+
+  const startRename = (u: Profile) => {
+    setEditingId(u.id)
+    setEditUsername(u.username || '')
+    setEditFullName(u.full_name)
+    setMessage(null)
+  }
+
+  const saveRename = async (u: Profile) => {
+    const res = await renameUser(u.id, editUsername, editFullName)
+    if (res.error || !res.profile) {
+      setMessage({ kind: 'err', text: res.error || 'Не удалось переименовать пользователя.' })
+      return
+    }
+    setUsers((prev) => prev.map((profile) => profile.id === u.id ? res.profile! : profile))
+    setEditingId(null)
+    setMessage({ kind: 'ok', text: 'Имя и логин пользователя обновлены.' })
   }
 
   return (
@@ -185,7 +206,22 @@ export default function UsersPage() {
                 className="grid grid-cols-[1fr_auto] items-center gap-2 px-4 py-3"
               >
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  {editingId === u.id ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input
+                        value={editFullName}
+                        onChange={(event) => setEditFullName(event.target.value)}
+                        placeholder="Имя и фамилия"
+                        className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                      />
+                      <input
+                        value={editUsername}
+                        onChange={(event) => setEditUsername(event.target.value)}
+                        placeholder="Логин"
+                        className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+                  ) : <><div className="flex items-center gap-2">
                     <span className="truncate font-medium text-slate-900">
                       {u.full_name || 'Без имени'}
                     </span>
@@ -198,15 +234,16 @@ export default function UsersPage() {
                   <div className="truncate text-xs text-slate-400">
                     @{u.username || '—'} · {formatDate(u.created_at)}
                   </div>
+                  </>}
                 </div>
-                <div className="flex w-52 items-center justify-end gap-2">
+                <div className="flex max-w-sm flex-wrap items-center justify-end gap-2">
                   {u.id === user?.id ? (
                     <Badge meta={ROLE_META[u.role]} />
                   ) : (
                     <select
                       value={u.role}
                       onChange={(e) => changeRole(u, e.target.value as Role)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
+                      className="w-36 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
                     >
                       {ROLES.map((r) => (
                         <option key={r} value={r}>
@@ -215,15 +252,19 @@ export default function UsersPage() {
                       ))}
                     </select>
                   )}
-                  {u.id !== user?.id && (
-                    <button
-                      type="button"
-                      onClick={() => remove(u)}
-                      className="rounded-lg border border-red-200 px-2.5 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
-                    >
-                      Удалить
-                    </button>
-                  )}
+                  {editingId === u.id ? <>
+                      <button type="button" onClick={() => saveRename(u)} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">Сохранить</button>
+                      <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Отмена</button>
+                    </> : <>
+                      <button type="button" onClick={() => startRename(u)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Переименовать</button>
+                      {u.id !== user?.id && <button
+                        type="button"
+                        onClick={() => remove(u)}
+                        className="rounded-lg border border-red-200 px-2.5 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                      >
+                        Удалить
+                      </button>}
+                    </>}
                 </div>
               </li>
             ))}

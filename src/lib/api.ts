@@ -63,6 +63,9 @@ export async function createProfile(input: { username: string; password: string;
 export async function changeProfileRole(id: string, role: Role): Promise<Profile> {
   return request(`/profiles/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) })
 }
+export async function updateProfile(id: string, input: { username: string; fullName: string }): Promise<Profile> {
+  return request(`/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(input) })
+}
 export async function deleteProfile(id: string): Promise<void> { return request(`/profiles/${id}`, { method: 'DELETE' }) }
 export async function getTelegramStatus(): Promise<TelegramStatus> { return request('/telegram/status') }
 export async function createTelegramInvite(): Promise<{ url: string; expires_at: string }> {
