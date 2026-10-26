@@ -697,6 +697,17 @@ app.patch('/profiles/:id', authenticate, requireAdmin, async (req, res) => {
     throw error
   }
 })
+app.patch('/profiles/:id/password', authenticate, requireAdmin, async (req, res) => {
+  const password = String(req.body.password || '')
+  if (password.length < 8) return res.status(400).json({ error: 'Пароль должен быть не короче 8 символов.' })
+  if (password.length > 200) return res.status(400).json({ error: 'Пароль слишком длинный.' })
+  const result = await pool.query(
+    `update profiles set password_hash=$1 where id=$2 and deleted_at is null returning id`,
+    [await bcrypt.hash(password, 12), req.params.id],
+  )
+  if (!result.rows[0]) return res.status(404).json({ error: 'Пользователь не найден.' })
+  res.status(204).end()
+})
 app.delete('/profiles/:id', authenticate, requireAdmin, async (req, res) => {
   if (req.params.id === req.auth.sub) return res.status(400).json({ error: 'Нельзя удалить собственную учётную запись.' })
   const result = await pool.query(

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { ROLE_META } from '../lib/constants'
 import { formatDate } from '../lib/helpers'
 import type { Profile, Role } from '../lib/types'
-import { adminCreateUser, listUsers, removeUser, renameUser, updateUserRole } from '../lib/users'
+import { adminCreateUser, listUsers, removeUser, renameUser, resetUserPassword, updateUserRole } from '../lib/users'
 
 const ROLES: Role[] = ['executor', 'boss', 'admin']
 
@@ -24,6 +24,8 @@ export default function UsersPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editUsername, setEditUsername] = useState('')
   const [editFullName, setEditFullName] = useState('')
+  const [passwordEditingId, setPasswordEditingId] = useState<string | null>(null)
+  const [newPassword, setNewPassword] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -78,10 +80,30 @@ export default function UsersPage() {
   }
 
   const startRename = (u: Profile) => {
+    setPasswordEditingId(null)
+    setNewPassword('')
     setEditingId(u.id)
     setEditUsername(u.username || '')
     setEditFullName(u.full_name)
     setMessage(null)
+  }
+
+  const startPasswordChange = (u: Profile) => {
+    setEditingId(null)
+    setPasswordEditingId(u.id)
+    setNewPassword('')
+    setMessage(null)
+  }
+
+  const savePassword = async (u: Profile) => {
+    const res = await resetUserPassword(u.id, newPassword)
+    if (res.error) {
+      setMessage({ kind: 'err', text: res.error })
+      return
+    }
+    setPasswordEditingId(null)
+    setNewPassword('')
+    setMessage({ kind: 'ok', text: `Пароль пользователя «${u.full_name || u.username}» изменён.` })
   }
 
   const saveRename = async (u: Profile) => {
@@ -221,6 +243,19 @@ export default function UsersPage() {
                         className="min-w-0 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
                       />
                     </div>
+                  ) : passwordEditingId === u.id ? (
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-500">Новый пароль</label>
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(event) => setNewPassword(event.target.value)}
+                        minLength={8}
+                        autoComplete="new-password"
+                        placeholder="Не менее 8 символов"
+                        className="w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
                   ) : <><div className="flex items-center gap-2">
                     <span className="truncate font-medium text-slate-900">
                       {u.full_name || 'Без имени'}
@@ -255,8 +290,12 @@ export default function UsersPage() {
                   {editingId === u.id ? <>
                       <button type="button" onClick={() => saveRename(u)} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">Сохранить</button>
                       <button type="button" onClick={() => setEditingId(null)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Отмена</button>
+                    </> : passwordEditingId === u.id ? <>
+                      <button type="button" onClick={() => savePassword(u)} disabled={newPassword.length < 8} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Сохранить пароль</button>
+                      <button type="button" onClick={() => { setPasswordEditingId(null); setNewPassword('') }} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Отмена</button>
                     </> : <>
                       <button type="button" onClick={() => startRename(u)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">Переименовать</button>
+                      <button type="button" onClick={() => startPasswordChange(u)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50">Сменить пароль</button>
                       {u.id !== user?.id && <button
                         type="button"
                         onClick={() => remove(u)}
