@@ -16,6 +16,7 @@ const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '')
 const jwtSecret = process.env.JWT_SECRET
 const appUrl = (process.env.APP_URL || '').replace(/\/$/, '')
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || ''
+const telegramApiBaseUrl = (process.env.TELEGRAM_API_BASE_URL || 'https://api.telegram.org').replace(/\/$/, '')
 let telegramBotUsername = (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '')
 let telegramUpdateOffset = 0
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean)
@@ -107,7 +108,7 @@ function requireAdmin(req, res, next) {
 
 async function telegramCall(method, payload = {}) {
   if (!telegramBotToken) throw new Error('Telegram bot is not configured')
-  const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/${method}`, {
+  const response = await fetch(`${telegramApiBaseUrl}/bot${telegramBotToken}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

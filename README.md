@@ -51,8 +51,14 @@ Nginx и HTTPS. При первом запуске автоматически с
 APP_URL=https://your-name.github.io/it-hub
 TELEGRAM_BOT_TOKEN=123456:your-token
 TELEGRAM_BOT_USERNAME=your_bot
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH=your-api-hash
+TELEGRAM_PROXY_SERVER=proxy.example.org
+TELEGRAM_PROXY_PORT=443
+TELEGRAM_PROXY_SECRET=your-mtproto-secret
 ```
 
+Локальный Telegram Bot API подключается к Telegram через MTProto-прокси.
 Backend получает сообщения через long polling, поэтому отдельный webhook и
 публичный порт для бота не нужны. Администратор создаёт одноразовую ссылку на
 странице «Telegram», отправляет её получателю, а бот присылает ему отчёты об
