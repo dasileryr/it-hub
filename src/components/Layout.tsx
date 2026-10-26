@@ -54,14 +54,31 @@ export default function Layout() {
                 Новая задача
               </NavLink>
               {profile?.role === 'admin' && (
-                <NavLink to="/users" className={navCls}>
-                  Пользователи
-                </NavLink>
+                <>
+                  <NavLink to="/notifications" className={navCls}>
+                    Telegram
+                  </NavLink>
+                  <NavLink to="/users" className={navCls}>
+                    Пользователи
+                  </NavLink>
+                </>
               )}
             </nav>
           </div>
 
           <div className="flex items-center gap-3">
+            {profile?.role === 'admin' && (
+              <NavLink
+                to="/notifications"
+                className={({ isActive }) => `rounded-lg p-2 sm:hidden ${isActive ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                title="Telegram-отчёты"
+                aria-label="Telegram-отчёты"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-12 0v3.2a2 2 0 01-.6 1.4L4 17h5m6 0a3 3 0 01-6 0" />
+                </svg>
+              </NavLink>
+            )}
             <div className="hidden items-center gap-2 sm:flex">
               <Avatar
                 name={displayName(profile)}

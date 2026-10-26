@@ -4,7 +4,7 @@ import express from 'express'
 import helmet from 'helmet'
 import jwt from 'jsonwebtoken'
 import multer from 'multer'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import pg from 'pg'
@@ -14,6 +14,10 @@ const port = Number(process.env.PORT || 3000)
 const uploadDir = process.env.UPLOAD_DIR || '/app/uploads'
 const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '')
 const jwtSecret = process.env.JWT_SECRET
+const appUrl = (process.env.APP_URL || '').replace(/\/$/, '')
+const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || ''
+let telegramBotUsername = (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '')
+let telegramUpdateOffset = 0
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map((v) => v.trim()).filter(Boolean)
 if (!process.env.DATABASE_URL || !jwtSecret || !publicUrl) throw new Error('DATABASE_URL, JWT_SECRET and PUBLIC_URL are required')
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
@@ -26,6 +30,25 @@ async function migrate() {
       id uuid primary key default gen_random_uuid(), username text not null unique,
       password_hash text not null, full_name text not null default '',
       role text not null default 'executor' check (role in ('admin','boss','executor')),
+      created_at timestamptz not null default now()
+    );
+    create table if not exists app_settings (
+      key text primary key,
+      value text not null
+    );
+    create table if not exists telegram_invites (
+      token text primary key,
+      created_by uuid not null references profiles(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      used_at timestamptz
+    );
+    create table if not exists telegram_subscribers (
+      chat_id text primary key,
+      telegram_username text,
+      display_name text not null default '',
+      invited_by uuid references profiles(id) on delete set null,
+      active boolean not null default true,
       created_at timestamptz not null default now()
     );
     create table if not exists tasks (
@@ -82,6 +105,186 @@ function requireAdmin(req, res, next) {
   next()
 }
 
+async function telegramCall(method, payload = {}) {
+  if (!telegramBotToken) throw new Error('Telegram bot is not configured')
+  const response = await fetch(`https://api.telegram.org/bot${telegramBotToken}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(35_000),
+  })
+  const result = await response.json()
+  if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API error: ${response.status}`)
+  return result.result
+}
+
+async function sendTelegramMessage(chatId, text) {
+  return telegramCall('sendMessage', { chat_id: chatId, text, disable_web_page_preview: true })
+}
+
+async function handleTelegramUpdate(update) {
+  const message = update.message
+  const text = message?.text?.trim() || ''
+  const chatId = message?.chat?.id
+  if (!chatId) return
+
+  if (/^\/stop(?:@\w+)?$/i.test(text)) {
+    await pool.query(
+      'update telegram_subscribers set active=false where chat_id=$1',
+      [String(chatId)],
+    )
+    await sendTelegramMessage(chatId, 'Отчёты ИТ-Задач отключены. Для повторного подключения понадобится новая ссылка-приглашение.')
+    return
+  }
+
+  const match = text.match(/^\/start(?:@\w+)?\s+([a-f0-9]{48})$/i)
+  if (!match) {
+    await sendTelegramMessage(chatId, 'Для подключения отчётов откройте ссылку-приглашение, которую прислал администратор ИТ-Задач.')
+    return
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    const result = await client.query(
+      `update telegram_invites set used_at=now()
+       where token=$1 and used_at is null and expires_at > now()
+       returning created_by`,
+      [match[1]],
+    )
+    if (!result.rows[0]) {
+      await client.query('rollback')
+      await sendTelegramMessage(chatId, 'Ссылка недействительна или истекла. Получите новую ссылку в приложении.')
+      return
+    }
+    const displayName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ')
+    await client.query(
+      `insert into telegram_subscribers(chat_id,telegram_username,display_name,invited_by,active)
+       values($1,$2,$3,$4,true)
+       on conflict(chat_id) do update set telegram_username=excluded.telegram_username,
+       display_name=excluded.display_name, invited_by=excluded.invited_by, active=true`,
+      [String(chatId), message.from?.username || null, displayName, result.rows[0].created_by],
+    )
+    await client.query('commit')
+    await sendTelegramMessage(chatId, 'Готово! Теперь сюда будут приходить отчёты об изменении статусов всех задач: автор, исполнитель, комментарий и фотографии решения. Команда /stop отключает отчёты.')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+async function pollTelegram() {
+  if (!telegramBotToken) return
+  try {
+    const updates = await telegramCall('getUpdates', {
+      offset: telegramUpdateOffset,
+      timeout: 25,
+      allowed_updates: ['message'],
+    })
+    for (const update of updates) {
+      try { await handleTelegramUpdate(update) }
+      catch (error) { console.error('Telegram update failed:', error.message) }
+      telegramUpdateOffset = Math.max(telegramUpdateOffset, update.update_id + 1)
+    }
+    if (updates.length > 0) {
+      await pool.query(
+        `insert into app_settings(key,value) values('telegram_update_offset',$1)
+         on conflict(key) do update set value=excluded.value`,
+        [String(telegramUpdateOffset)],
+      )
+    }
+  } catch (error) {
+    console.error('Telegram polling failed:', error.message)
+  } finally {
+    setTimeout(pollTelegram, 2_000)
+  }
+}
+
+async function startTelegramBot() {
+  if (!telegramBotToken) {
+    console.log('Telegram bot is disabled')
+    return
+  }
+  try {
+    const bot = await telegramCall('getMe')
+    telegramBotUsername = bot.username
+    const offset = await pool.query("select value from app_settings where key='telegram_update_offset'")
+    telegramUpdateOffset = Number(offset.rows[0]?.value || 0)
+    console.log(`Telegram bot started: @${telegramBotUsername}`)
+    pollTelegram()
+  } catch (error) {
+    console.error('Telegram bot startup failed:', error.message)
+    setTimeout(startTelegramBot, 10_000)
+  }
+}
+
+const STATUS_LABELS = {
+  new: 'Новая', in_progress: 'В работе', waiting: 'Ожидает', done: 'Решена', cancelled: 'Отменена',
+}
+
+async function sendTelegramReport(chatId, text, photos) {
+  if (photos.length === 0) return sendTelegramMessage(chatId, text)
+  if (photos.length === 1) {
+    return telegramCall('sendPhoto', { chat_id: chatId, photo: photos[0].url, caption: text.slice(0, 1024) })
+  }
+  return telegramCall('sendMediaGroup', {
+    chat_id: chatId,
+    media: photos.slice(0, 10).map((photo, index) => ({
+      type: 'photo', media: photo.url, ...(index === 0 ? { caption: text.slice(0, 1024) } : {}),
+    })),
+  })
+}
+
+async function notifyTaskStatusChanged(task, actorId) {
+  if (!telegramBotToken) return
+  const [people, comment] = await Promise.all([
+    pool.query(
+      `select creator.full_name creator_name, creator.username creator_username,
+       actor.full_name actor_name, actor.username actor_username,
+       assignee.full_name assignee_name, assignee.username assignee_username
+       from profiles creator join profiles actor on actor.id=$2
+       left join profiles assignee on assignee.id=$3 where creator.id=$1`,
+      [task.created_by, actorId, task.assigned_to],
+    ),
+    pool.query(
+      `select c.id, c.body, p.full_name author_name, p.username author_username
+       from comments c join profiles p on p.id=c.author_id
+       where c.task_id=$1 and c.author_id=$2 order by c.created_at desc limit 1`,
+      [task.id, actorId],
+    ),
+  ])
+  const person = people.rows[0]
+  const latestComment = comment.rows[0]
+  const photos = latestComment ? (await pool.query(
+    `select url from attachments where task_id=$1 and comment_id=$2 and kind='solution'
+     order by created_at limit 10`,
+    [task.id, latestComment.id],
+  )).rows : []
+  const subscribers = await pool.query('select chat_id from telegram_subscribers where active=true order by created_at')
+  if (subscribers.rowCount === 0) return
+
+  const creator = person?.creator_name || `@${person?.creator_username || '—'}`
+  const actor = person?.actor_name || `@${person?.actor_username || '—'}`
+  const assignee = person?.assignee_name || (person?.assignee_username ? `@${person.assignee_username}` : 'не назначен')
+  const location = [task.classroom && `аудитория ${task.classroom}`, task.computer && `компьютер ${task.computer}`]
+    .filter(Boolean).join(', ')
+  const lines = [
+    `📋 Статус задачи: ${STATUS_LABELS[task.status] || task.status}`,
+    '',
+    `Задача: ${task.title}`,
+    `Чья задача: ${creator}`,
+    `Исполнитель: ${assignee}`,
+    `Изменил: ${actor}`,
+  ]
+  if (location) lines.push(`Место: ${location}`)
+  if (latestComment?.body) lines.push('', `Комментарий: ${latestComment.body}`)
+  if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
+  const text = lines.join('\n')
+  await Promise.allSettled(subscribers.rows.map(({ chat_id: chatId }) => sendTelegramReport(chatId, text, photos)))
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadDir),
   filename: (_req, file, cb) => {
@@ -110,6 +313,31 @@ app.get('/auth/me', authenticate, async (req, res) => {
   const result = await pool.query('select * from profiles where id=$1', [req.auth.sub])
   if (!result.rows[0]) return res.status(401).json({ error: 'Пользователь не найден.' })
   res.json({ profile: publicProfile(result.rows[0]) })
+})
+app.get('/telegram/status', authenticate, requireAdmin, async (_req, res) => {
+  const result = await pool.query(
+    `select chat_id, telegram_username, display_name, created_at
+     from telegram_subscribers where active=true order by created_at`,
+  )
+  res.json({
+    enabled: Boolean(telegramBotToken && telegramBotUsername),
+    bot_username: telegramBotUsername || null,
+    subscribers: result.rows,
+  })
+})
+app.post('/telegram/invites', authenticate, requireAdmin, async (req, res) => {
+  if (!telegramBotToken || !telegramBotUsername) return res.status(503).json({ error: 'Telegram-бот ещё не настроен.' })
+  const token = randomBytes(24).toString('hex')
+  const result = await pool.query(
+    `insert into telegram_invites(token,created_by,expires_at)
+     values($1,$2,now() + interval '7 days') returning expires_at`,
+    [token, req.auth.sub],
+  )
+  res.json({ url: `https://t.me/${telegramBotUsername}?start=${token}`, expires_at: result.rows[0].expires_at })
+})
+app.delete('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (req, res) => {
+  await pool.query('update telegram_subscribers set active=false where chat_id=$1', [req.params.chatId])
+  res.status(204).end()
 })
 app.get('/profiles', authenticate, async (_req, res) => {
   const result = await pool.query('select * from profiles order by full_name, username')
@@ -193,6 +421,10 @@ app.patch('/tasks/:id', authenticate, async (req, res) => {
   const values = updates.map((field) => req.body[field] === '' ? null : req.body[field])
   const set = updates.map((field, index) => `${field}=$${index + 1}`).join(',')
   const result = await pool.query(`update tasks set ${set}, updated_at=now() where id=$${values.length + 1} returning *`, [...values, req.params.id])
+  if (task.status !== result.rows[0].status) {
+    notifyTaskStatusChanged(result.rows[0], req.auth.sub)
+      .catch((error) => console.error('Telegram notification failed:', error.message))
+  }
   res.json(result.rows[0])
 })
 app.delete('/tasks/:id', authenticate, async (req, res) => {
@@ -231,3 +463,4 @@ app.use((error, _req, res, _next) => {
 })
 await migrate()
 app.listen(port, '0.0.0.0', () => console.log(`IT Hub API listening on ${port}`))
+startTelegramBot()

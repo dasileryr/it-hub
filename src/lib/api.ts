@@ -7,6 +7,16 @@ const TOKEN_KEY = 'it-hub-token'
 
 export interface Session { access_token: string; user: { id: string } }
 export interface TaskDetails { task: Task; comments: Comment[]; attachments: Attachment[] }
+export interface TelegramStatus {
+  enabled: boolean
+  bot_username: string | null
+  subscribers: Array<{
+    chat_id: string
+    telegram_username: string | null
+    display_name: string
+    created_at: string
+  }>
+}
 
 export class ApiError extends Error {
   status: number
@@ -43,6 +53,13 @@ export async function createProfile(input: { username: string; password: string;
 }
 export async function changeProfileRole(id: string, role: Role): Promise<Profile> {
   return request(`/profiles/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) })
+}
+export async function getTelegramStatus(): Promise<TelegramStatus> { return request('/telegram/status') }
+export async function createTelegramInvite(): Promise<{ url: string; expires_at: string }> {
+  return request('/telegram/invites', { method: 'POST' })
+}
+export async function removeTelegramSubscriber(chatId: string): Promise<void> {
+  return request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'DELETE' })
 }
 export async function getTasks(): Promise<Task[]> { return request('/tasks') }
 export async function getTask(id: string): Promise<TaskDetails> { return request(`/tasks/${id}`) }

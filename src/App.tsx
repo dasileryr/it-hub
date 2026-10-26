@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import NewTaskPage from './pages/NewTaskPage'
+import NotificationsPage from './pages/NotificationsPage'
 import TaskPage from './pages/TaskPage'
 import UsersPage from './pages/UsersPage'
 
@@ -39,6 +40,14 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/tasks/new" element={<NewTaskPage />} />
             <Route path="/tasks/:id" element={<TaskPage />} />
+            <Route
+              path="/notifications"
+              element={
+                <RequireAdmin>
+                  <NotificationsPage />
+                </RequireAdmin>
+              }
+            />
             <Route
               path="/users"
               element={
