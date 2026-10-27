@@ -397,7 +397,7 @@ async function sendTelegramReport(chatId, text, photos, replyMarkup) {
 }
 
 async function notifyTaskStatusChanged(task, actorId) {
-  if (!telegramBotToken || task.status !== 'done') return
+  if (!telegramBotToken) return
   const [people, comment] = await Promise.all([
     pool.query(
       `select creator.full_name creator_name, creator.username creator_username,
@@ -423,10 +423,13 @@ async function notifyTaskStatusChanged(task, actorId) {
   )).rows : []
   const subscribers = await pool.query(
     `select chat_id, profile_id from telegram_subscribers
-     where active=true and (notification_mode in ('all_completed','all_completed_and_assigned')
-       or (notification_mode='user_completed' and notification_user_id=$1))
+     where active=true and (
+       notification_mode='all_completed_and_assigned'
+       or ($2='done' and notification_mode='all_completed')
+       or ($2='done' and notification_mode='user_completed' and notification_user_id=$1)
+     )
      order by created_at`,
-    [actorId],
+    [actorId, task.status],
   )
   if (subscribers.rowCount === 0) return
 
