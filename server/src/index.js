@@ -65,6 +65,13 @@ async function migrate() {
     alter table telegram_subscribers add column if not exists profile_id uuid references profiles(id) on delete set null;
     update telegram_subscribers set notification_mode='all_completed_and_assigned'
       where notify_task_created=true and notification_mode='all_completed';
+    update telegram_subscribers set notification_mode='all_events'
+      where notification_mode='all_completed_and_assigned';
+    update telegram_subscribers set notification_mode='all_status_changes'
+      where notification_mode='all_completed';
+    update telegram_subscribers set notification_mode='user_tasks'
+      where notification_mode='user_completed';
+    alter table telegram_subscribers alter column notification_mode set default 'all_status_changes';
     create table if not exists tasks (
       id uuid primary key default gen_random_uuid(), title text not null,
       description text not null default '', status text not null default 'new' check (status in ('new','in_progress','waiting','done','cancelled')),
@@ -424,12 +431,11 @@ async function notifyTaskStatusChanged(task, actorId) {
   const subscribers = await pool.query(
     `select chat_id, profile_id from telegram_subscribers
      where active=true and (
-       notification_mode='all_completed_and_assigned'
-       or ($2='done' and notification_mode='all_completed')
-       or ($2='done' and notification_mode='user_completed' and notification_user_id=$1)
+       notification_mode in ('all_events','all_status_changes')
+       or (notification_mode='user_tasks' and notification_user_id in ($1,$2))
      )
      order by created_at`,
-    [actorId, task.status],
+    [task.created_by, task.assigned_to],
   )
   if (subscribers.rowCount === 0) return
 
@@ -471,7 +477,7 @@ async function notifyTaskCreated(task) {
     ),
     pool.query(
       `select chat_id, profile_id from telegram_subscribers
-       where active=true and notification_mode='all_completed_and_assigned' order by created_at`,
+       where active=true and notification_mode='all_events' order by created_at`,
     ),
   ])
   if (subscribers.rowCount === 0) return
@@ -510,7 +516,7 @@ async function notifyTaskAssigned(task, actorId) {
     ),
     pool.query(
       `select chat_id, profile_id from telegram_subscribers
-       where active=true and notification_mode='all_completed_and_assigned' order by created_at`,
+       where active=true and notification_mode='all_events' order by created_at`,
     ),
   ])
   if (subscribers.rowCount === 0) return
@@ -618,10 +624,10 @@ app.patch('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (re
   const mode = String(req.body.notification_mode || '')
   const userId = req.body.notification_user_id || null
   const profileId = req.body.profile_id || null
-  if (!['all_completed', 'all_completed_and_assigned', 'user_completed'].includes(mode)) {
+  if (!['all_status_changes', 'all_events', 'user_tasks'].includes(mode)) {
     return res.status(400).json({ error: 'Некорректный режим уведомлений.' })
   }
-  if (mode === 'user_completed') {
+  if (mode === 'user_tasks') {
     if (!userId) return res.status(400).json({ error: 'Выберите пользователя.' })
     const profile = await pool.query('select 1 from profiles where id=$1', [userId])
     if (!profile.rows[0]) return res.status(400).json({ error: 'Пользователь не найден.' })
@@ -634,7 +640,7 @@ app.patch('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (re
     `update telegram_subscribers set notification_mode=$1, notification_user_id=$2, profile_id=$3
      where chat_id=$4 and active=true
      returning chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id, profile_id`,
-    [mode, mode === 'user_completed' ? userId : null, profileId, req.params.chatId],
+    [mode, mode === 'user_tasks' ? userId : null, profileId, req.params.chatId],
   )
   if (!result.rows[0]) return res.status(404).json({ error: 'Получатель не найден.' })
   res.json(result.rows[0])

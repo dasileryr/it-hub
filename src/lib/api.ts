@@ -20,7 +20,7 @@ export interface TelegramStatus {
     profile_id: string | null
   }>
 }
-export type TelegramNotificationMode = 'all_completed' | 'all_completed_and_assigned' | 'user_completed'
+export type TelegramNotificationMode = 'all_status_changes' | 'all_events' | 'user_tasks'
 
 export class ApiError extends Error {
   status: number

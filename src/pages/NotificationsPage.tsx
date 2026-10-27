@@ -72,7 +72,7 @@ export default function NotificationsPage() {
     try {
       await updateTelegramSubscriber(chatId, {
         notification_mode: subscriber.notification_mode,
-        notification_user_id: subscriber.notification_mode === 'user_completed' ? subscriber.notification_user_id : null,
+        notification_user_id: subscriber.notification_mode === 'user_tasks' ? subscriber.notification_user_id : null,
         profile_id: subscriber.profile_id,
       })
     } catch (err) { setError((err as Error).message) }
@@ -168,12 +168,12 @@ export default function NotificationsPage() {
                     onChange={(event) => changeSubscriber(subscriber.chat_id, { notification_mode: event.target.value as TelegramNotificationMode })}
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700"
                   >
-                    <option value="all_completed">Все выполненные задачи</option>
-                    <option value="all_completed_and_assigned">Выполненные + новые и назначенные</option>
-                    <option value="user_completed">Выполненные выбранным пользователем</option>
+                    <option value="all_status_changes">Все изменения статусов</option>
+                    <option value="all_events">Новые задачи + назначения + все статусы</option>
+                    <option value="user_tasks">Статусы задач выбранного пользователя</option>
                   </select>
                   </label>
-                  {subscriber.notification_mode === 'user_completed' ? (
+                  {subscriber.notification_mode === 'user_tasks' ? (
                     <select
                       value={subscriber.notification_user_id || ''}
                       onChange={(event) => changeSubscriber(subscriber.chat_id, { notification_user_id: event.target.value || null })}
