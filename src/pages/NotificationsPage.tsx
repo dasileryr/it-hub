@@ -191,7 +191,7 @@ export default function NotificationsPage() {
                       onChange={(event) => changeSubscriber(subscriber.chat_id, { notify_comments: event.target.checked })}
                       className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    Уведомлять о новых комментариях
+                    Получать комментарии, отправленные вручную
                   </label>
                   <div className="flex justify-end">
                     <button onClick={() => saveSubscriber(subscriber.chat_id)} disabled={busy} className={btnSecondary}>Сохранить</button>

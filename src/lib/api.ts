@@ -103,6 +103,7 @@ export async function createComment(taskId: string, input: { body: string; kind:
   await request(`/tasks/${taskId}/comments`, { method: 'POST', body: form })
 }
 export async function deleteComment(id: string): Promise<void> { return request(`/comments/${id}`, { method: 'DELETE' }) }
+export async function notifyComment(id: string): Promise<{ sent: number }> { return request(`/comments/${id}/notify`, { method: 'POST' }) }
 export async function getPushConfig(): Promise<{ enabled: boolean; publicKey: string | null }> { return request('/push/config') }
 export async function savePushSubscription(subscription: PushSubscriptionJSON): Promise<void> {
   return request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) })

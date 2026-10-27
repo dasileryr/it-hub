@@ -12,7 +12,7 @@ import {
   inputCls,
 } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
-import { createComment, deleteComment, deleteTask, getProfiles, getTask, reopenTask, updateTask } from '../lib/api'
+import { createComment, deleteComment, deleteTask, getProfiles, getTask, notifyComment, reopenTask, updateTask } from '../lib/api'
 import type { TaskPatch } from '../lib/api'
 import {
   CLASSROOMS,
@@ -55,6 +55,7 @@ export default function TaskPage() {
   const [kind, setKind] = useState<AttachmentKind>('solution')
   const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
+  const [notifyingCommentId, setNotifyingCommentId] = useState<string | null>(null)
 
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState('')
@@ -154,6 +155,15 @@ export default function TaskPage() {
       await deleteComment(comment.id)
       await load()
     } catch (error) { alert((error as Error).message) }
+  }
+
+  async function handleNotifyComment(comment: Comment) {
+    setNotifyingCommentId(comment.id)
+    try {
+      const result = await notifyComment(comment.id)
+      alert(result.sent > 0 ? `Комментарий отправлен в Telegram. Получателей: ${result.sent}.` : 'Нет подходящих получателей. Включите ручные комментарии в настройках Telegram.')
+    } catch (error) { alert((error as Error).message) }
+    finally { setNotifyingCommentId(null) }
   }
 
   async function submitComment(e: FormEvent) {
@@ -441,15 +451,27 @@ export default function TaskPage() {
                     </div>
                   </div>
                   </div>
-                  {profile?.role === 'admin' && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteComment(c)}
-                      className="text-xs font-medium text-red-600 hover:text-red-700"
-                    >
-                      Удалить
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {(profile?.role === 'admin' || profile?.role === 'boss') && (
+                      <button
+                        type="button"
+                        onClick={() => handleNotifyComment(c)}
+                        disabled={notifyingCommentId === c.id}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+                      >
+                        {notifyingCommentId === c.id ? 'Отправляем…' : 'Отправить в Telegram'}
+                      </button>
+                    )}
+                    {profile?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteComment(c)}
+                        className="text-xs font-medium text-red-600 hover:text-red-700"
+                      >
+                        Удалить
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {c.body && (

@@ -279,15 +279,13 @@ async function handleTelegramUpdate(update) {
       const client = await pool.connect()
       try {
         await client.query('begin')
-        const insertedComment = await client.query(
-          `insert into comments(task_id,author_id,body) values($1,$2,$3) returning id`,
+        await client.query(
+          `insert into comments(task_id,author_id,body) values($1,$2,$3)`,
           [pending.rows[0].task_id, pending.rows[0].profile_id, text],
         )
         await client.query('update tasks set updated_at=now() where id=$1', [pending.rows[0].task_id])
         await client.query('delete from telegram_pending_comments where chat_id=$1', [String(chatId)])
         await client.query('commit')
-        notifyTaskCommentAdded(pending.rows[0].task_id, insertedComment.rows[0].id, String(chatId))
-          .catch((error) => console.error('Telegram comment notification failed:', error.message))
         await sendTelegramMessage(chatId, `Комментарий добавлен к задаче «${pending.rows[0].title}».`)
       } catch (error) {
         await client.query('rollback')
@@ -539,7 +537,7 @@ async function notifyTaskAssigned(task, actorId) {
 }
 
 async function notifyTaskCommentAdded(taskId, commentId, excludeChatId = null) {
-  if (!telegramBotToken) return
+  if (!telegramBotToken) return 0
   const [details, photos] = await Promise.all([
     pool.query(
       `select t.id,t.title,t.created_by,t.assigned_to,t.classroom,t.computer,
@@ -557,7 +555,7 @@ async function notifyTaskCommentAdded(taskId, commentId, excludeChatId = null) {
     ),
   ])
   const task = details.rows[0]
-  if (!task) return
+  if (!task) return 0
   const subscribers = await pool.query(
     `select chat_id,profile_id from telegram_subscribers
      where active=true and notify_comments=true
@@ -567,7 +565,7 @@ async function notifyTaskCommentAdded(taskId, commentId, excludeChatId = null) {
      order by created_at`,
     [task.created_by, task.assigned_to, excludeChatId],
   )
-  if (subscribers.rowCount === 0) return
+  if (subscribers.rowCount === 0) return 0
   const lines = [
     '💬 Новый комментарий', '', `Задача: ${task.title}`,
     `Чья задача: ${task.creator_name}`, `Исполнитель: ${task.assignee_name || 'не назначен'}`,
@@ -578,8 +576,12 @@ async function notifyTaskCommentAdded(taskId, commentId, excludeChatId = null) {
   }
   if (task.body) lines.push('', `Комментарий: ${task.body}`)
   if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
-  await Promise.allSettled(subscribers.rows.map(async ({ chat_id: chatId, profile_id: profileId }) =>
+  const deliveries = await Promise.allSettled(subscribers.rows.map(async ({ chat_id: chatId, profile_id: profileId }) =>
     sendTelegramReport(chatId, lines.join('\n'), photos.rows, await telegramTaskKeyboard(task.id, profileId))))
+  for (const delivery of deliveries) {
+    if (delivery.status === 'rejected') console.error('Telegram comment notification failed:', delivery.reason?.message || delivery.reason)
+  }
+  return deliveries.filter((delivery) => delivery.status === 'fulfilled').length
 }
 
 async function sendPushToUser(profileId, payload) {
@@ -928,8 +930,6 @@ app.post('/tasks/:id/comments', authenticate, upload.array('photos'), async (req
       [req.params.id, result.rows[0].id, file.filename, `${publicUrl}/uploads/${file.filename}`, kind, req.auth.sub])
     await client.query('update tasks set updated_at=now() where id=$1', [req.params.id])
     await client.query('commit')
-    notifyTaskCommentAdded(req.params.id, result.rows[0].id)
-      .catch((error) => console.error('Telegram comment notification failed:', error.message))
     res.status(201).json(result.rows[0])
   } catch (error) {
     await client.query('rollback')
@@ -944,6 +944,13 @@ app.delete('/comments/:id', authenticate, requireAdmin, async (req, res) => {
   await pool.query('update tasks set updated_at=now() where id=$1', [result.rows[0].task_id])
   await Promise.all(files.rows.map((file) => fs.rm(path.join(uploadDir, path.basename(file.storage_path)), { force: true })))
   res.status(204).end()
+})
+app.post('/comments/:id/notify', authenticate, async (req, res) => {
+  if (!['admin', 'boss'].includes(req.auth.role)) return res.status(403).json({ error: 'Недостаточно прав для отправки уведомления.' })
+  const comment = await pool.query('select task_id from comments where id=$1', [req.params.id])
+  if (!comment.rows[0]) return res.status(404).json({ error: 'Комментарий не найден.' })
+  const sent = await notifyTaskCommentAdded(comment.rows[0].task_id, req.params.id)
+  res.json({ sent })
 })
 app.use((error, _req, res, _next) => {
   console.error(error)
