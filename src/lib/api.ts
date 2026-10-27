@@ -18,6 +18,7 @@ export interface TelegramStatus {
     notification_mode: TelegramNotificationMode
     notification_user_id: string | null
     profile_id: string | null
+    notify_comments: boolean
   }>
 }
 export type TelegramNotificationMode = 'all_status_changes' | 'all_events' | 'user_tasks'
@@ -77,7 +78,7 @@ export async function createTelegramInvite(): Promise<{ url: string; expires_at:
 export async function removeTelegramSubscriber(chatId: string): Promise<void> {
   return request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'DELETE' })
 }
-export async function updateTelegramSubscriber(chatId: string, input: { notification_mode: TelegramNotificationMode; notification_user_id: string | null; profile_id: string | null }): Promise<void> {
+export async function updateTelegramSubscriber(chatId: string, input: { notification_mode: TelegramNotificationMode; notification_user_id: string | null; profile_id: string | null; notify_comments: boolean }): Promise<void> {
   await request(`/telegram/subscribers/${encodeURIComponent(chatId)}`, { method: 'PATCH', body: JSON.stringify(input) })
 }
 export async function getTasks(archived = false): Promise<Task[]> { return request(`/tasks${archived ? '?archived=true' : ''}`) }

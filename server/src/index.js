@@ -65,6 +65,7 @@ async function migrate() {
     alter table telegram_subscribers add column if not exists notification_mode text not null default 'all_completed';
     alter table telegram_subscribers add column if not exists notification_user_id uuid references profiles(id) on delete set null;
     alter table telegram_subscribers add column if not exists profile_id uuid references profiles(id) on delete set null;
+    alter table telegram_subscribers add column if not exists notify_comments boolean not null default false;
     update telegram_subscribers set notification_mode='all_completed_and_assigned'
       where notify_task_created=true and notification_mode='all_completed';
     update telegram_subscribers set notification_mode='all_events'
@@ -278,13 +279,15 @@ async function handleTelegramUpdate(update) {
       const client = await pool.connect()
       try {
         await client.query('begin')
-        await client.query(
-          `insert into comments(task_id,author_id,body) values($1,$2,$3)`,
+        const insertedComment = await client.query(
+          `insert into comments(task_id,author_id,body) values($1,$2,$3) returning id`,
           [pending.rows[0].task_id, pending.rows[0].profile_id, text],
         )
         await client.query('update tasks set updated_at=now() where id=$1', [pending.rows[0].task_id])
         await client.query('delete from telegram_pending_comments where chat_id=$1', [String(chatId)])
         await client.query('commit')
+        notifyTaskCommentAdded(pending.rows[0].task_id, insertedComment.rows[0].id, String(chatId))
+          .catch((error) => console.error('Telegram comment notification failed:', error.message))
         await sendTelegramMessage(chatId, `Комментарий добавлен к задаче «${pending.rows[0].title}».`)
       } catch (error) {
         await client.query('rollback')
@@ -535,6 +538,50 @@ async function notifyTaskAssigned(task, actorId) {
     sendTelegramMessage(chatId, lines.join('\n'), await telegramTaskKeyboard(task.id, profileId))))
 }
 
+async function notifyTaskCommentAdded(taskId, commentId, excludeChatId = null) {
+  if (!telegramBotToken) return
+  const [details, photos] = await Promise.all([
+    pool.query(
+      `select t.id,t.title,t.created_by,t.assigned_to,t.classroom,t.computer,
+       creator.full_name creator_name,assignee.full_name assignee_name,
+       c.body,p.full_name author_name
+       from tasks t join profiles creator on creator.id=t.created_by
+       left join profiles assignee on assignee.id=t.assigned_to
+       join comments c on c.id=$2 and c.task_id=t.id join profiles p on p.id=c.author_id
+       where t.id=$1`,
+      [taskId, commentId],
+    ),
+    pool.query(
+      `select url,storage_path from attachments where comment_id=$1 order by created_at limit 10`,
+      [commentId],
+    ),
+  ])
+  const task = details.rows[0]
+  if (!task) return
+  const subscribers = await pool.query(
+    `select chat_id,profile_id from telegram_subscribers
+     where active=true and notify_comments=true
+       and ($3::text is null or chat_id<>$3)
+       and (notification_mode in ('all_events','all_status_changes')
+         or (notification_mode='user_tasks' and notification_user_id in ($1,$2)))
+     order by created_at`,
+    [task.created_by, task.assigned_to, excludeChatId],
+  )
+  if (subscribers.rowCount === 0) return
+  const lines = [
+    '💬 Новый комментарий', '', `Задача: ${task.title}`,
+    `Чья задача: ${task.creator_name}`, `Исполнитель: ${task.assignee_name || 'не назначен'}`,
+    `Автор комментария: ${task.author_name}`,
+  ]
+  if (task.classroom || task.computer) {
+    lines.push(`Место: ${[task.classroom && `аудитория ${task.classroom}`, task.computer && `компьютер ${task.computer}`].filter(Boolean).join(', ')}`)
+  }
+  if (task.body) lines.push('', `Комментарий: ${task.body}`)
+  if (appUrl) lines.push('', `${appUrl}/#/tasks/${task.id}`)
+  await Promise.allSettled(subscribers.rows.map(async ({ chat_id: chatId, profile_id: profileId }) =>
+    sendTelegramReport(chatId, lines.join('\n'), photos.rows, await telegramTaskKeyboard(task.id, profileId))))
+}
+
 async function sendPushToUser(profileId, payload) {
   if (!profileId || !vapidPublicKey || !vapidPrivateKey) return
   const subscriptions = await pool.query(
@@ -617,7 +664,7 @@ app.get('/auth/me', authenticate, async (req, res) => {
 })
 app.get('/telegram/status', authenticate, requireAdmin, async (_req, res) => {
   const result = await pool.query(
-    `select chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id, profile_id
+    `select chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id, profile_id, notify_comments
      from telegram_subscribers where active=true order by created_at`,
   )
   res.json({
@@ -630,6 +677,7 @@ app.patch('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (re
   const mode = String(req.body.notification_mode || '')
   const userId = req.body.notification_user_id || null
   const profileId = req.body.profile_id || null
+  const notifyComments = req.body.notify_comments === true
   if (!['all_status_changes', 'all_events', 'user_tasks'].includes(mode)) {
     return res.status(400).json({ error: 'Некорректный режим уведомлений.' })
   }
@@ -643,10 +691,10 @@ app.patch('/telegram/subscribers/:chatId', authenticate, requireAdmin, async (re
     if (!linkedProfile.rows[0]) return res.status(400).json({ error: 'Связанный аккаунт не найден.' })
   }
   const result = await pool.query(
-    `update telegram_subscribers set notification_mode=$1, notification_user_id=$2, profile_id=$3
-     where chat_id=$4 and active=true
-     returning chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id, profile_id`,
-    [mode, mode === 'user_tasks' ? userId : null, profileId, req.params.chatId],
+    `update telegram_subscribers set notification_mode=$1, notification_user_id=$2, profile_id=$3, notify_comments=$4
+     where chat_id=$5 and active=true
+     returning chat_id, telegram_username, display_name, created_at, notification_mode, notification_user_id, profile_id, notify_comments`,
+    [mode, mode === 'user_tasks' ? userId : null, profileId, notifyComments, req.params.chatId],
   )
   if (!result.rows[0]) return res.status(404).json({ error: 'Получатель не найден.' })
   res.json(result.rows[0])
@@ -880,6 +928,8 @@ app.post('/tasks/:id/comments', authenticate, upload.array('photos'), async (req
       [req.params.id, result.rows[0].id, file.filename, `${publicUrl}/uploads/${file.filename}`, kind, req.auth.sub])
     await client.query('update tasks set updated_at=now() where id=$1', [req.params.id])
     await client.query('commit')
+    notifyTaskCommentAdded(req.params.id, result.rows[0].id)
+      .catch((error) => console.error('Telegram comment notification failed:', error.message))
     res.status(201).json(result.rows[0])
   } catch (error) {
     await client.query('rollback')

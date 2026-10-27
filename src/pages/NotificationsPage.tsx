@@ -74,6 +74,7 @@ export default function NotificationsPage() {
         notification_mode: subscriber.notification_mode,
         notification_user_id: subscriber.notification_mode === 'user_tasks' ? subscriber.notification_user_id : null,
         profile_id: subscriber.profile_id,
+        notify_comments: subscriber.notify_comments,
       })
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -183,6 +184,15 @@ export default function NotificationsPage() {
                       {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.full_name || profile.username}</option>)}
                     </select>
                   ) : <div />}
+                  <label className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 ring-1 ring-inset ring-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={subscriber.notify_comments}
+                      onChange={(event) => changeSubscriber(subscriber.chat_id, { notify_comments: event.target.checked })}
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    Уведомлять о новых комментариях
+                  </label>
                   <div className="flex justify-end">
                     <button onClick={() => saveSubscriber(subscriber.chat_id)} disabled={busy} className={btnSecondary}>Сохранить</button>
                   </div>
