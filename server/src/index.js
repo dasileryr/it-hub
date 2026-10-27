@@ -40,6 +40,8 @@ async function migrate() {
       created_at timestamptz not null default now()
     );
     alter table profiles add column if not exists deleted_at timestamptz;
+    alter table profiles add column if not exists can_create_as_others boolean not null default false;
+    update profiles set can_create_as_others=true where username='zadvornyj_d';
     create table if not exists app_settings (
       key text primary key,
       value text not null
@@ -128,7 +130,11 @@ async function migrate() {
 }
 
 function publicProfile(row, prefix = '') {
-  return { id: row[`${prefix}id`], username: row[`${prefix}username`], full_name: row[`${prefix}full_name`], role: row[`${prefix}role`], created_at: row[`${prefix}created_at`] }
+  return {
+    id: row[`${prefix}id`], username: row[`${prefix}username`], full_name: row[`${prefix}full_name`],
+    role: row[`${prefix}role`], created_at: row[`${prefix}created_at`],
+    can_create_as_others: Boolean(row[`${prefix}can_create_as_others`]),
+  }
 }
 function sign(profile) { return jwt.sign({ sub: profile.id, role: profile.role }, jwtSecret, { expiresIn: '12h' }) }
 async function authenticate(req, res, next) {
@@ -136,9 +142,9 @@ async function authenticate(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Требуется авторизация.' })
   try {
     const claims = jwt.verify(token, jwtSecret)
-    const result = await pool.query('select id, role from profiles where id=$1 and deleted_at is null', [claims.sub])
+    const result = await pool.query('select id, role, can_create_as_others from profiles where id=$1 and deleted_at is null', [claims.sub])
     if (!result.rows[0]) return res.status(401).json({ error: 'Пользователь не найден.' })
-    req.auth = { sub: result.rows[0].id, role: result.rows[0].role }
+    req.auth = { sub: result.rows[0].id, role: result.rows[0].role, canCreateAsOthers: result.rows[0].can_create_as_others }
     next()
   } catch { res.status(401).json({ error: 'Сессия истекла. Войдите снова.' }) }
 }
@@ -768,8 +774,24 @@ app.post('/tasks', authenticate, upload.array('photos'), async (req, res) => {
   const client = await pool.connect()
   try {
     await client.query('begin')
+    let creatorId = req.auth.sub
+    const requestedCreatorId = String(req.body.created_by || '')
+    if (requestedCreatorId && requestedCreatorId !== req.auth.sub) {
+      if (!req.auth.canCreateAsOthers) {
+        await client.query('rollback')
+        await Promise.all((req.files || []).map((file) => fs.rm(file.path, { force: true })))
+        return res.status(403).json({ error: 'Недостаточно прав для создания задачи от имени другого пользователя.' })
+      }
+      const creator = await client.query('select id from profiles where id=$1 and deleted_at is null', [requestedCreatorId])
+      if (!creator.rows[0]) {
+        await client.query('rollback')
+        await Promise.all((req.files || []).map((file) => fs.rm(file.path, { force: true })))
+        return res.status(400).json({ error: 'Выбранный автор не найден.' })
+      }
+      creatorId = creator.rows[0].id
+    }
     const result = await client.query(`insert into tasks(title,description,priority,classroom,computer,assigned_to,created_by) values($1,$2,$3,$4,$5,$6,$7) returning *`,
-      [req.body.title, req.body.description || '', req.body.priority || 'medium', req.body.classroom || null, req.body.computer || null, req.body.assigned_to || null, req.auth.sub])
+      [req.body.title, req.body.description || '', req.body.priority || 'medium', req.body.classroom || null, req.body.computer || null, req.body.assigned_to || null, creatorId])
     const task = result.rows[0]
     for (const file of req.files || []) await client.query(`insert into attachments(task_id,storage_path,url,kind,uploaded_by) values($1,$2,$3,'problem',$4)`,
       [task.id, file.filename, `${publicUrl}/uploads/${file.filename}`, req.auth.sub])

@@ -87,10 +87,11 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
 }
 export async function deleteTask(id: string): Promise<void> { return request(`/tasks/${id}`, { method: 'DELETE' }) }
 export async function reopenTask(id: string): Promise<Task> { return request(`/tasks/${id}/reopen`, { method: 'POST' }) }
-export async function createTask(input: { title: string; description: string; priority: TaskPriority; classroom: string; computer: string; assigned_to: string; photos: File[] }): Promise<Task> {
+export async function createTask(input: { title: string; description: string; priority: TaskPriority; classroom: string; computer: string; assigned_to: string; created_by?: string; photos: File[] }): Promise<Task> {
   const form = new FormData()
   form.set('title', input.title); form.set('description', input.description); form.set('priority', input.priority)
   form.set('classroom', input.classroom); form.set('computer', input.computer); form.set('assigned_to', input.assigned_to)
+  if (input.created_by) form.set('created_by', input.created_by)
   for (const file of input.photos) form.append('photos', await resizeImage(file), file.name)
   return request('/tasks', { method: 'POST', body: form })
 }

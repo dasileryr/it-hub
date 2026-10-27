@@ -12,6 +12,7 @@ export interface Profile {
   username: string | null
   role: Role
   created_at: string
+  can_create_as_others?: boolean
 }
 
 export interface Task {

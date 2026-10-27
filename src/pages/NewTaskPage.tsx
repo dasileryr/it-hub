@@ -7,15 +7,18 @@ import { createTask, getProfiles } from '../lib/api'
 import { CLASSROOMS, COMPUTERS, PRIORITY_META, computerLabel } from '../lib/constants'
 import type { Profile, TaskPriority } from '../lib/types'
 import { TASK_PRIORITIES } from '../lib/types'
+import { useAuth } from '../context/AuthContext'
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
+  const { user, profile } = useAuth()
 
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [assignee, setAssignee] = useState('')
+  const [creator, setCreator] = useState('')
   const [classroom, setClassroom] = useState('')
   const [computer, setComputer] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -23,15 +26,18 @@ export default function NewTaskPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getProfiles().then(setProfiles).catch(() => setProfiles([]))
-  }, [])
+    getProfiles().then((items) => {
+      setProfiles(items)
+      setCreator(user?.id || '')
+    }).catch(() => setProfiles([]))
+  }, [user?.id])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
     setError('')
     try {
-      const task = await createTask({ title: title.trim(), description: description.trim(), priority, classroom, computer, assigned_to: assignee, photos: files })
+      const task = await createTask({ title: title.trim(), description: description.trim(), priority, classroom, computer, assigned_to: assignee, created_by: creator || undefined, photos: files })
       navigate(`/tasks/${task.id}`)
     } catch (err) {
       setError((err as Error).message)
@@ -69,6 +75,21 @@ export default function NewTaskPage() {
         onSubmit={submit}
         className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
       >
+        {profile?.can_create_as_others && (
+          <div className="rounded-xl bg-indigo-50 p-3 ring-1 ring-inset ring-indigo-200">
+            <label className="mb-1 block text-sm font-medium text-indigo-900">
+              Создать от имени
+            </label>
+            <select value={creator} onChange={(event) => setCreator(event.target.value)} className={inputCls}>
+              {profiles.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.full_name || item.username}{item.id === user?.id ? ' (я)' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-indigo-700">Выбранный пользователь будет указан автором задачи.</p>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">
             Название задачи
